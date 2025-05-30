@@ -320,6 +320,46 @@
             justify-content: center;
         }
 
+        .pinyin-feedback {
+            background: var(--neutral-50);
+            border: 2px solid var(--primary-light);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin: 1rem 0;
+            text-align: center;
+            display: none;
+        }
+
+        .pinyin-feedback.show {
+            display: block;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .pinyin-character {
+            font-family: 'Noto Serif SC', serif;
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--neutral-900);
+            margin-bottom: 0.5rem;
+        }
+
+        .pinyin-pronunciation {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--primary-dark);
+            margin-bottom: 0.5rem;
+        }
+
+        .pinyin-meaning {
+            font-size: 0.875rem;
+            color: var(--neutral-700);
+        }
+
         .results-container {
             text-align: center;
         }
@@ -492,6 +532,12 @@
                     <!-- Answer buttons will be generated here -->
                 </div>
                 
+                <div class="pinyin-feedback" id="pinyinFeedback">
+                    <div class="pinyin-character" id="pinyinCharacter">爱</div>
+                    <div class="pinyin-pronunciation" id="pinyinPronunciation">ài</div>
+                    <div class="pinyin-meaning" id="pinyinMeaning">to love; affection</div>
+                </div>
+                
                 <div class="quiz-actions">
                     <button id="nextQuestionBtn" class="btn btn-primary" style="display: none;">
                         Next Question
@@ -525,7 +571,7 @@
 
     <script>
         // --- Configuration ---
-        const GOOGLE_SHEET_PUBLISHED_CSV_URL = 'https://script.google.com/macros/s/AKfycbwJZLtCPX98-AorcG_L3nxHAYMkeKjaJ2PEUO8ofd1e8wWTNG7MGdkQp8-4FdL-vz5r/exec';
+        const GOOGLE_SHEET_PUBLISHED_CSV_URL = 'https://script.google.com/macros/s/AKfycbyo8vB3e6tqf-mP2JCCWkwZ6flSqA7bLk-VyryHnsOqsIbbSOO5U8Uo3MzmAuY4HBD_/exec';
         const STORAGE_KEY_STREAKS = 'chineseQuiz_streaks_v1';
         const STORAGE_KEY_CURRENT = 'chineseQuiz_currentProgress_v1';
 
@@ -558,11 +604,44 @@
         const answerOptions = document.getElementById('answerOptions');
         const nextQuestionBtn = document.getElementById('nextQuestionBtn');
         const finishQuizBtn = document.getElementById('finishQuizBtn');
+        const pinyinFeedback = document.getElementById('pinyinFeedback');
+        const pinyinCharacter = document.getElementById('pinyinCharacter');
+        const pinyinPronunciation = document.getElementById('pinyinPronunciation');
+        const pinyinMeaning = document.getElementById('pinyinMeaning');
         const finalScore = document.getElementById('finalScore');
         const resultsMessage = document.getElementById('resultsMessage');
         const streakCelebration = document.getElementById('streakCelebration');
         const newQuizBtn = document.getElementById('newQuizBtn');
         const backToSetupBtn = document.getElementById('backToSetupBtn');
+
+        // --- Google Sheets Recording ---
+        async function recordStreakToSheet(date, streaksCompleted) {
+            try {
+                const response = await fetch(GOOGLE_SHEET_PUBLISHED_CSV_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'recordStreak',
+                        date: date,
+                        streaks: streaksCompleted
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to record streak: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                console.log('Streak recorded successfully:', result);
+                return true;
+            } catch (error) {
+                console.error('Error recording streak to sheet:', error);
+                // Don't show error to user - this is a background operation
+                return false;
+            }
+        }
 
         // --- Data Loading ---
         async function fetchWordsFromSheet() {
@@ -752,6 +831,9 @@
             const question = generateQuestion(word);
             const options = generateAnswerOptions(question);
             
+            // Hide pinyin feedback for new question
+            pinyinFeedback.classList.remove('show');
+            
             // Update progress
             questionNumber.textContent = `Question ${currentQuestionIndex + 1} of 10`;
             quizProgressBar.style.width = `${((currentQuestionIndex + 1) / 10) * 100}%`;
@@ -789,6 +871,7 @@
             
             selectedAnswer = selectedOption;
             const isCorrect = selectedOption === correctAnswer;
+            const currentWord = currentQuiz[currentQuestionIndex];
             
             if (isCorrect) {
                 currentScore++;
@@ -804,6 +887,12 @@
                 }
             });
             
+            // Show pinyin feedback for the correct word
+            pinyinCharacter.textContent = currentWord.character;
+            pinyinPronunciation.textContent = currentWord.pinyin;
+            pinyinMeaning.textContent = currentWord.meaning;
+            pinyinFeedback.classList.add('show');
+            
             // Update score display
             quizScore.textContent = `Score: ${currentScore}/${currentQuestionIndex + 1}`;
             
@@ -817,26 +906,35 @@
 
         function nextQuestion() {
             currentQuestionIndex++;
+            pinyinFeedback.classList.remove('show'); // Hide pinyin feedback
             displayQuestion();
         }
 
-        function finishQuiz() {
+        async function finishQuiz() {
             // Update progress
+            const previousProgress = currentProgress;
             currentProgress += currentScore;
             
             // Check for streak completion
             let streakCompleted = false;
+            let newStreaksThisQuiz = 0;
+            
             if (currentProgress >= 10) {
-                totalStreaks++;
-                currentProgress = 0;
+                newStreaksThisQuiz = Math.floor(currentProgress / 10);
+                totalStreaks += newStreaksThisQuiz;
+                currentProgress = currentProgress % 10;
                 streakCompleted = true;
+                
+                // Record streak(s) to Google Sheet
+                const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+                await recordStreakToSheet(today, newStreaksThisQuiz);
             }
             
             saveProgress();
-            showResults(streakCompleted);
+            showResults(streakCompleted, newStreaksThisQuiz);
         }
 
-        function showResults(streakCompleted) {
+        function showResults(streakCompleted, newStreaksCount = 1) {
             // Calculate score styling
             const percentage = (currentScore / 10) * 100;
             let scoreClass = 'needs-work';
@@ -858,6 +956,17 @@
             
             // Show streak celebration if applicable
             if (streakCompleted) {
+                const celebration = document.querySelector('.streak-celebration h3');
+                const celebrationText = document.querySelector('.streak-celebration p');
+                
+                if (newStreaksCount > 1) {
+                    celebration.textContent = `🎉 ${newStreaksCount} Streaks Complete!`;
+                    celebrationText.textContent = `Amazing! You completed ${newStreaksCount} streaks in this quiz!`;
+                } else {
+                    celebration.textContent = '🎉 Streak Complete!';
+                    celebrationText.textContent = 'You\'ve completed another 10-question streak!';
+                }
+                
                 streakCelebration.style.display = 'block';
             } else {
                 streakCelebration.style.display = 'none';
